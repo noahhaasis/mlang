@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Eval where
 
-import Control.Monad.Trans (liftIO)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT, throwE, runExceptT)
 import Control.Monad (when)
 import Data.Map.Strict as Map
@@ -58,7 +58,7 @@ minusB [RLit (E.LNum a), RLit (E.LNum b)]
   = return $ RLit $ E.LNum (a - b)
 
 printB :: [RuntimeExpr] -> EvalM RuntimeExpr
-printB [RLit (E.LText t)] = liftIO (const (RLit E.LUnit) <$> putStrLn t) -- TODO
+printB [RLit (E.LText t)] = liftIO (const (RLit E.LUnit) <$> putStrLn t)
 
 builtins :: Map.Map E.Identifier Builtin
 builtins = Map.fromList
