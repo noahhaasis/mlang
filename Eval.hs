@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Eval where
 
+import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Except (ExceptT, throwE, runExceptT)
 import Control.Monad (when)
 import Data.Map.Strict as Map
@@ -23,14 +24,13 @@ data Function = Function [E.Identifier] RuntimeExpr
 data Builtin =
   Builtin 
     { name :: E.Identifier
-    , paramCount :: Int -- TODO: Remove later and add EvalM to eval Builtin
-    , evalBuiltin :: ([RuntimeExpr] -> RuntimeExpr)
+    , evalBuiltin :: ([RuntimeExpr] -> EvalM RuntimeExpr)
     }
 
 type Env = Map E.Identifier RuntimeExpr
 
 instance Show Builtin where
-  show (Builtin name _ _) = "{builtin: `" ++ name ++ "`}"
+  show (Builtin name _) = "{builtin: `" ++ name ++ "`}"
 
 inject :: E.Expr -> RuntimeExpr
 inject (E.ELit l) = RLit l
@@ -49,19 +49,22 @@ data EvalError
     }
   deriving (Show)
 
-plusB :: [RuntimeExpr] -> RuntimeExpr
-plusB [RLit (E.LNum a), RLit (E.LNum b)] = RLit $ E.LNum (a + b)
+plusB :: [RuntimeExpr] -> EvalM RuntimeExpr
+plusB [RLit (E.LNum a), RLit (E.LNum b)]
+  = return $ RLit $ E.LNum (a + b)
 
-minusB :: [RuntimeExpr] -> RuntimeExpr
-minusB [RLit (E.LNum a), RLit (E.LNum b)] = RLit $ E.LNum (a - b)
+minusB :: [RuntimeExpr] -> EvalM RuntimeExpr
+minusB [RLit (E.LNum a), RLit (E.LNum b)]
+  = return $ RLit $ E.LNum (a - b)
 
-printB :: [RuntimeExpr] -> RuntimeExpr
-printB [RLit (E.LText t)] = undefined -- TODO
+printB :: [RuntimeExpr] -> EvalM RuntimeExpr
+printB [RLit (E.LText t)] = liftIO (const (RLit E.LUnit) <$> putStrLn t) -- TODO
 
 builtins :: Map.Map E.Identifier Builtin
 builtins = Map.fromList
-  [ ("+", Builtin "+" 2 plusB)
-  , ("-", Builtin "-" 2 minusB)
+  [ ("+", Builtin "+" plusB)
+  , ("-", Builtin "-" minusB)
+  , ("print", Builtin "print" printB)
   ]
 
 type EvalM = ExceptT EvalError IO
@@ -81,11 +84,9 @@ eval' e (RApp (f:args)) = eval' e f >>= \case
     args' <- mapM (eval' e) args
     let newEnv = Map.union (Map.fromList (zip params args')) e'
     eval' newEnv body
-  (RBuiltin (Builtin name paramCount evalBuiltin)) -> do
-    when (paramCount /= length args)
-      $ throwE $ ParityMismatch paramCount (length args)
+  (RBuiltin (Builtin name evalBuiltin)) -> do
     args' <- mapM (eval' e) args
-    return $ evalBuiltin args'
+    evalBuiltin args'
   expr -> throwE $ ExpectedFunctionButGot expr
 eval' e (RApp []) = throwE IllegalEmptyApplication
 eval' e (RFun f) = return $ RClosure e f
