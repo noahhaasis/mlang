@@ -2,13 +2,14 @@ module Parser where
 
 import Expr
 
-data ParseError = FailedToParser -- TODO 
+data ParseError = FailedToParser -- TODO
 
 newtype Parser a = Parser (String -> [(a, String)])
 
 instance Functor Parser where
   fmap f (Parser p) = Parser (fmap (mapFst f) . p)
-      where mapFst f (a,b) = (f a, b)
+    where
+      mapFst f (a, b) = (f a, b)
 
 instance Applicative Parser where
   pure = undefined
