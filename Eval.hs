@@ -33,10 +33,10 @@ instance Show Builtin where
   show (Builtin name _) = "{builtin: `" ++ name ++ "`}"
 
 inject :: E.Expr -> RuntimeExpr
-inject (E.ELit l) = RLit l
-inject (E.ERef i) = RRef i
-inject (E.EApp es) = RApp (inject <$> es)
-inject (E.EFun params body) =
+inject (E.Lit l) = RLit l
+inject (E.Ref i) = RRef i
+inject (E.App es) = RApp (inject <$> es)
+inject (E.Fun params body) =
     RFun $ Function params $ inject body
 
 data EvalError
@@ -52,13 +52,16 @@ data EvalError
 plusB :: [RuntimeExpr] -> EvalM RuntimeExpr
 plusB [RLit (E.LNum a), RLit (E.LNum b)]
   = return $ RLit $ E.LNum (a + b)
+plusB _args = throwE undefined
 
 minusB :: [RuntimeExpr] -> EvalM RuntimeExpr
 minusB [RLit (E.LNum a), RLit (E.LNum b)]
   = return $ RLit $ E.LNum (a - b)
+minusB _args = throwE undefined
 
 printB :: [RuntimeExpr] -> EvalM RuntimeExpr
 printB [RLit (E.LText t)] = liftIO (const (RLit E.LUnit) <$> putStrLn t)
+printB _args = throwE undefined
 
 builtins :: Map.Map E.Identifier Builtin
 builtins = Map.fromList
