@@ -2,8 +2,9 @@
 
 module Typeinfer where
 
+import Control.Monad (replicateM)
 import Control.Monad.Except (MonadError, throwError)
-import Control.Monad.Reader (MonadReader, ask)
+import Control.Monad.Reader (MonadReader, ask, local)
 import Control.Monad.State.Strict (MonadState, evalState, get, modify)
 import Data.Functor.Foldable
 import Data.Map (Map)
@@ -60,8 +61,24 @@ collectConstraints (AnnotRef annot v) =
   ask >>= \env -> case Map.lookup v env of
     Just t -> return $ Set.singleton (TVar annot, t)
     Nothing -> throwError $ UnboundVar v
-collectConstraints (AnnotApp annot f a) = undefined -- TODO
-collectConstraints (AnnotFun annot v b) = undefined -- TODO
+collectConstraints (AnnotApp annot f args) = do
+  let argTypes = TVar . annotation <$> args
+  returnType <- TVar <$> freshVar
+  let functionType = foldr TArrow returnType argTypes
+  return $
+    Set.fromList
+      [ (TVar annot, returnType),
+        (TVar $ annotation f, functionType)
+      ]
+collectConstraints (AnnotFun annot params b) = do
+  paramTypes <- replicateM (length params) (TVar <$> freshVar)
+  let paramMap = Map.fromList $ zip params paramTypes
+  cs <- local (Map.union paramMap) $ collectConstraints b
+  let returnType = TVar $ annotation b
+  let functionType = foldr TArrow returnType paramTypes
+  return $
+    Set.singleton (TVar annot, functionType)
+      `Set.union` cs
 
 groundType :: Literal -> Type
 groundType (LNum _) = TInt

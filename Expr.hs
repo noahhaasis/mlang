@@ -19,6 +19,7 @@ module Expr
     pattern AnnotRef,
     pattern AnnotApp,
     pattern AnnotFun,
+    annotation,
   )
 where
 
@@ -65,6 +66,9 @@ pattern Fun params body <- Fix (EFun params body)
 newtype AnnotatedExpr a
   = AnnotatedExpr (a, ExprF (AnnotatedExpr a))
   deriving (Show, Functor, Foldable, Traversable)
+
+annotation :: AnnotatedExpr a -> a
+annotation (AnnotatedExpr (a, _)) = a
 
 pattern AnnotLit annot l <- AnnotatedExpr (annot, ELit l)
 
