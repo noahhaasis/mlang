@@ -1,6 +1,10 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Typeinfer where
 
-import Control.Monad.State.Lazy (State, evalState, get, modify)
+import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Reader (MonadReader, ask)
+import Control.Monad.State.Strict (MonadState, evalState, get, modify)
 import Data.Functor.Foldable
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -20,22 +24,49 @@ type TypedExpr = AnnotatedExpr Type
 
 type TypeVar = String
 
-freshVar :: State Int TypeVar
+freshVar :: MonadState Int m => m TypeVar
 freshVar = modify (+ 1) >> (show <$> get)
 
 annotate :: Expr -> AnnotatedExpr TypeVar
 annotate = flip evalState 0 . annotate'
 
-annotate' :: Expr -> State Int (AnnotatedExpr TypeVar)
+annotate' ::
+  MonadState Int m => Expr -> m (AnnotatedExpr TypeVar)
 annotate' (Fix e) =
   curry AnnotatedExpr
     <$> freshVar
     <*> traverse annotate' e
 
-type Constraints = (Set (Type, Type))
+type Constraints = Set (Type, Type)
 
-collectConstraints :: AnnotatedExpr TypeVar -> Constraints
-collectConstraints = undefined
+type InferEnv = Map TypeVar Type
+
+data AnnotationError = UnboundVar Identifier
+
+-- TODO: Refactor using recursion schemes.
+-- Maybe even combine this pass with the annotation pass,
+-- since we have to generate fresh vars during constraint
+-- generation anyways.
+collectConstraints ::
+  ( MonadReader InferEnv m,
+    MonadError AnnotationError m,
+    MonadState Int m
+  ) =>
+  AnnotatedExpr TypeVar ->
+  m Constraints
+collectConstraints (AnnotLit annot l) =
+  return $ Set.singleton (TVar annot, groundType l)
+collectConstraints (AnnotRef annot v) =
+  ask >>= \env -> case Map.lookup v env of
+    Just t -> return $ Set.singleton (TVar annot, t)
+    Nothing -> throwError $ UnboundVar v
+collectConstraints (AnnotApp annot f a) = undefined -- TODO
+collectConstraints (AnnotFun annot v b) = undefined -- TODO
+
+groundType :: Literal -> Type
+groundType (LNum _) = TInt
+groundType (LBool _) = TBool
+groundType LUnit = TUnit
 
 type Substitution = Map TypeVar Type
 
@@ -46,13 +77,17 @@ solveConstraints ::
 solveConstraints cs = case Set.minView cs of
   Just (c, cs') -> case c of
     (t, t') | t == t' -> solveConstraints cs'
-    (TVar v, t) ->
-      Map.insert v t
-        <$> solveConstraints (substituteInConstraints v t cs')
-    (t, TVar v) -> undefined
+    (TVar v, t) -> unifyWithTypeVar v t cs
+    (t, TVar v) -> unifyWithTypeVar v t cs
+    (TArrow t1 t2, TArrow t1' t2') ->
+      solveConstraints
+        (Set.fromList [(t1, t1'), (t2, t2')] `Set.union` cs')
     (t, t') -> Left $ UnableToUnify t t'
   Nothing -> return Map.empty
   where
+    unifyWithTypeVar v t cs =
+      Map.insert v t
+        <$> solveConstraints (substituteInConstraints v t cs)
     substituteInConstraints v t =
       Set.map (fmap $ substituteInType v t)
     substituteInType v t (TVar v') | v == v' = t
@@ -62,10 +97,8 @@ solveConstraints cs = case Set.minView cs of
         (substituteInType v t t2)
     substituteInType _ _ t' = t'
 
--- TODO: Return the type var instead of failing when
---       the type var isn't in the substitution
 applySubstitution ::
   Substitution ->
   AnnotatedExpr TypeVar ->
-  Maybe TypedExpr
-applySubstitution s = traverse (`Map.lookup` s)
+  TypedExpr
+applySubstitution s = fmap (\v -> Map.findWithDefault (TVar v) v s)

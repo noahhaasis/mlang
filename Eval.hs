@@ -5,13 +5,15 @@ module Eval where
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict as Map
 import Expr (Expr)
 import qualified Expr as E
 
 data RuntimeExpr
   = RLit E.Literal
-  | RApp [RuntimeExpr]
+  | RApp RuntimeExpr (NonEmpty RuntimeExpr)
   | RFun Function
   | RRef E.Identifier
   | RBuiltin Builtin
@@ -21,10 +23,11 @@ data RuntimeExpr
 data Function = Function [E.Identifier] RuntimeExpr
   deriving (Show)
 
-data Builtin = Builtin
-  { name :: E.Identifier,
-    evalBuiltin :: [RuntimeExpr] -> EvalM RuntimeExpr
-  }
+data Builtin
+  = Builtin
+      { name :: E.Identifier,
+        evalBuiltin :: [RuntimeExpr] -> EvalM RuntimeExpr
+      }
 
 type Env = Map E.Identifier RuntimeExpr
 
@@ -34,7 +37,7 @@ instance Show Builtin where
 inject :: E.Expr -> RuntimeExpr
 inject (E.Lit l) = RLit l
 inject (E.Ref i) = RRef i
-inject (E.App es) = RApp (inject <$> es)
+inject (E.App f as) = RApp (inject f) (inject <$> as)
 inject (E.Fun params body) =
   RFun $ Function params $ inject body
 
@@ -80,19 +83,18 @@ eval = eval' Map.empty . inject
 
 eval' :: Env -> RuntimeExpr -> EvalM RuntimeExpr
 eval' e (RLit l) = return $ RLit l
-eval' e (RApp (f : args)) = eval' e f >>= \case
+eval' e (RApp f args) = eval' e f >>= \case
   (RClosure e' (Function params body)) -> do
     when (length params /= length args)
       $ throwE
       $ ParityMismatch (length params) (length args)
     args' <- mapM (eval' e) args
-    let newEnv = Map.union (Map.fromList (zip params args')) e'
+    let newEnv = Map.union (Map.fromList (zip params $ NE.toList args')) e'
     eval' newEnv body
   (RBuiltin (Builtin name evalBuiltin)) -> do
     args' <- mapM (eval' e) args
-    evalBuiltin args'
+    evalBuiltin $ NE.toList args'
   expr -> throwE $ ExpectedFunctionButGot expr
-eval' e (RApp []) = throwE IllegalEmptyApplication
 eval' e (RFun f) = return $ RClosure e f
 eval' e (RRef v) = case Map.lookup v e of
   Just expr -> return expr

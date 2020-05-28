@@ -15,11 +15,16 @@ module Expr
     pattern App,
     pattern Fun,
     AnnotatedExpr (..),
+    pattern AnnotLit,
+    pattern AnnotRef,
+    pattern AnnotApp,
+    pattern AnnotFun,
   )
 where
 
 import Data.Functor.Foldable
 import Data.List (intercalate)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import Data.Map.Strict as Map
 
@@ -35,7 +40,7 @@ data Literal
 data ExprF f
   = ELit Literal
   | ERef Identifier
-  | EApp [f]
+  | EApp f (NonEmpty f)
   | EFun [Identifier] f
   deriving (Show, Functor, Foldable, Traversable)
 
@@ -45,7 +50,7 @@ lit = Fix . ELit
 
 ref = Fix . ERef
 
-app = Fix . EApp
+app f args = Fix $ EApp f args
 
 fun params body = Fix (EFun params body)
 
@@ -53,10 +58,18 @@ pattern Lit l <- Fix (ELit l)
 
 pattern Ref v <- Fix (ERef v)
 
-pattern App as <- Fix (EApp as)
+pattern App f as <- Fix (EApp f as)
 
 pattern Fun params body <- Fix (EFun params body)
 
 newtype AnnotatedExpr a
   = AnnotatedExpr (a, ExprF (AnnotatedExpr a))
   deriving (Show, Functor, Foldable, Traversable)
+
+pattern AnnotLit annot l <- AnnotatedExpr (annot, ELit l)
+
+pattern AnnotRef annot v <- AnnotatedExpr (annot, ERef v)
+
+pattern AnnotApp annot f as <- AnnotatedExpr (annot, EApp f as)
+
+pattern AnnotFun annot params body <- AnnotatedExpr (annot, EFun params body)
