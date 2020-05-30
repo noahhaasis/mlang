@@ -45,23 +45,23 @@ data ExprF f
   | EFun [Identifier] f
   deriving (Show, Functor, Foldable, Traversable)
 
-type Expr = Fix ExprF
+newtype Expr = Expr (ExprF Expr)
 
-lit = Fix . ELit
+lit = Expr . ELit
 
-ref = Fix . ERef
+ref = Expr . ERef
 
-app f args = Fix $ EApp f args
+app f args = Expr $ EApp f args
 
-fun params body = Fix (EFun params body)
+fun params body = Expr (EFun params body)
 
-pattern Lit l <- Fix (ELit l)
+pattern Lit l <- Expr (ELit l)
 
-pattern Ref v <- Fix (ERef v)
+pattern Ref v <- Expr (ERef v)
 
-pattern App f as <- Fix (EApp f as)
+pattern App f as <- Expr (EApp f as)
 
-pattern Fun params body <- Fix (EFun params body)
+pattern Fun params body <- Expr (EFun params body)
 
 newtype AnnotatedExpr a
   = AnnotatedExpr (a, ExprF (AnnotatedExpr a))

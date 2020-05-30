@@ -2,55 +2,60 @@
 
 module Typeinfer where
 
+import Builtins
 import Control.Monad (replicateM)
-import Control.Monad.Except (MonadError, throwError)
-import Control.Monad.Reader (MonadReader, ask, local)
-import Control.Monad.State.Strict (MonadState, evalState, get, modify)
+import Control.Monad.Except (Except, MonadError, runExcept, throwError)
+import Control.Monad.Reader (MonadReader, ReaderT, ask, local, runReaderT)
+import Control.Monad.State.Strict (MonadState, StateT, evalState, evalStateT, get, modify)
 import Data.Functor.Foldable
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Expr
+import Type
 
-data Type
-  = TInt
-  | TBool
-  | TUnit
-  | TArrow Type Type
-  | TVar TypeVar
-  deriving (Eq, Ord, Show)
-
-type TypedExpr = AnnotatedExpr Type
-
-type TypeVar = String
-
-freshVar :: MonadState Int m => m TypeVar
-freshVar = modify (+ 1) >> (show <$> get)
+infer :: Expr -> Either InferError TypedExpr
+infer e = do
+  let annotExpr = annotate e
+  cs <- runCollectConstraintsM builtinTypes $ collectConstraints annotExpr
+  subs <- solveConstraints cs
+  return $ applySubstitution subs annotExpr
 
 annotate :: Expr -> AnnotatedExpr TypeVar
 annotate = flip evalState 0 . annotate'
 
 annotate' ::
   MonadState Int m => Expr -> m (AnnotatedExpr TypeVar)
-annotate' (Fix e) =
+annotate' (Expr e) =
   curry AnnotatedExpr
     <$> freshVar
     <*> traverse annotate' e
 
 type Constraints = Set (Type, Type)
 
-type InferEnv = Map TypeVar Type
+data InferError
+  = UnboundVar Identifier
+  | UnableToUnify Type Type
+  deriving (Show)
 
-data AnnotationError = UnboundVar Identifier
+-- TODO: Pass type env for builtins later
+runCollectConstraintsM ::
+  TypeEnv ->
+  StateT Int (ReaderT TypeEnv (Except InferError)) a ->
+  Either InferError a
+runCollectConstraintsM env =
+  runExcept
+    . flip runReaderT env
+    . flip evalStateT 0
 
 -- TODO: Refactor using recursion schemes.
 -- Maybe even combine this pass with the annotation pass,
 -- since we have to generate fresh vars during constraint
 -- generation anyways.
 collectConstraints ::
-  ( MonadReader InferEnv m,
-    MonadError AnnotationError m,
+  ( MonadReader TypeEnv m,
+    MonadError InferError m,
     MonadState Int m
   ) =>
   AnnotatedExpr TypeVar ->
@@ -65,11 +70,13 @@ collectConstraints (AnnotApp annot f args) = do
   let argTypes = TVar . annotation <$> args
   returnType <- TVar <$> freshVar
   let functionType = foldr TArrow returnType argTypes
+  cs <- collectConstraints f
   return $
     Set.fromList
       [ (TVar annot, returnType),
         (TVar $ annotation f, functionType)
       ]
+      `Set.union` cs
 collectConstraints (AnnotFun annot params b) = do
   paramTypes <- replicateM (length params) (TVar <$> freshVar)
   let paramMap = Map.fromList $ zip params paramTypes
@@ -87,15 +94,13 @@ groundType LUnit = TUnit
 
 type Substitution = Map TypeVar Type
 
-data UnificationError = UnableToUnify Type Type
-
 solveConstraints ::
-  Constraints -> Either UnificationError Substitution
+  Constraints -> Either InferError Substitution
 solveConstraints cs = case Set.minView cs of
   Just (c, cs') -> case c of
     (t, t') | t == t' -> solveConstraints cs'
-    (TVar v, t) -> unifyWithTypeVar v t cs
-    (t, TVar v) -> unifyWithTypeVar v t cs
+    (TVar v, t) -> unifyWithTypeVar v t cs'
+    (t, TVar v) -> unifyWithTypeVar v t cs'
     (TArrow t1 t2, TArrow t1' t2') ->
       solveConstraints
         (Set.fromList [(t1, t1'), (t2, t2')] `Set.union` cs')
@@ -105,8 +110,9 @@ solveConstraints cs = case Set.minView cs of
     unifyWithTypeVar v t cs =
       Map.insert v t
         <$> solveConstraints (substituteInConstraints v t cs)
-    substituteInConstraints v t =
-      Set.map (fmap $ substituteInType v t)
+    substituteInConstraints v t cs = Set.map subsInEquation cs
+      where
+        subsInEquation (t1, t2) = (substituteInType v t t1, substituteInType v t t2)
     substituteInType v t (TVar v') | v == v' = t
     substituteInType v t (TArrow t1 t2) =
       TArrow

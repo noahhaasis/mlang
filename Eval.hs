@@ -23,16 +23,38 @@ data RuntimeExpr
 data Function = Function [E.Identifier] RuntimeExpr
   deriving (Show)
 
+type Env = Map E.Identifier RuntimeExpr
+
 data Builtin
   = Builtin
       { name :: E.Identifier,
         evalBuiltin :: [RuntimeExpr] -> EvalM RuntimeExpr
       }
 
-type Env = Map E.Identifier RuntimeExpr
-
 instance Show Builtin where
   show (Builtin name _) = "{builtin: `" ++ name ++ "`}"
+
+builtins :: Map.Map E.Identifier Builtin
+builtins =
+  Map.fromList
+    [ ("+", Builtin "+" plusB),
+      ("-", Builtin "-" minusB),
+      ("print", Builtin "print" printB)
+    ]
+
+plusB :: [RuntimeExpr] -> EvalM RuntimeExpr
+plusB [RLit (E.LNum a), RLit (E.LNum b)] =
+  return $ RLit $ E.LNum (a + b)
+plusB _args = throwE undefined
+
+minusB :: [RuntimeExpr] -> EvalM RuntimeExpr
+minusB [RLit (E.LNum a), RLit (E.LNum b)] =
+  return $ RLit $ E.LNum (a - b)
+minusB _args = throwE undefined
+
+printB :: [RuntimeExpr] -> EvalM RuntimeExpr
+printB [RLit (E.LText t)] = liftIO (RLit E.LUnit <$ putStrLn t)
+printB _args = throwE undefined
 
 inject :: E.Expr -> RuntimeExpr
 inject (E.Lit l) = RLit l
@@ -50,28 +72,6 @@ data EvalError
         numberOfArgs :: Int
       }
   deriving (Show)
-
-plusB :: [RuntimeExpr] -> EvalM RuntimeExpr
-plusB [RLit (E.LNum a), RLit (E.LNum b)] =
-  return $ RLit $ E.LNum (a + b)
-plusB _args = throwE undefined
-
-minusB :: [RuntimeExpr] -> EvalM RuntimeExpr
-minusB [RLit (E.LNum a), RLit (E.LNum b)] =
-  return $ RLit $ E.LNum (a - b)
-minusB _args = throwE undefined
-
-printB :: [RuntimeExpr] -> EvalM RuntimeExpr
-printB [RLit (E.LText t)] = liftIO (RLit E.LUnit <$ putStrLn t)
-printB _args = throwE undefined
-
-builtins :: Map.Map E.Identifier Builtin
-builtins =
-  Map.fromList
-    [ ("+", Builtin "+" plusB),
-      ("-", Builtin "-" minusB),
-      ("print", Builtin "print" printB)
-    ]
 
 type EvalM = ExceptT EvalError IO
 
