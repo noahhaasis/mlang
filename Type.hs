@@ -6,6 +6,8 @@ import Control.Monad.State.Strict (MonadState, StateT, evalState, evalStateT, ge
 import Data.Map (Map)
 import Expr
 
+data Scheme = Monotype Type | Forall [Identifier] Type
+
 data Type
   = TInt
   | TBool
@@ -23,7 +25,7 @@ instance Show Type where
 
 type TypeEnv = Map Identifier Type
 
-type TypedExpr = AnnotatedExpr Type
+type TypedExpr = AnnotatedExpr Scheme
 
 type TypeVar = String
 

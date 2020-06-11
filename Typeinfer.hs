@@ -8,6 +8,7 @@ import Control.Monad.Except (Except, MonadError, runExcept, throwError)
 import Control.Monad.Reader (MonadReader, ReaderT, ask, local, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalState, evalStateT, get, modify)
 import Data.Functor.Foldable
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -19,7 +20,7 @@ infer :: Expr -> Either InferError TypedExpr
 infer e = do
   let annotExpr = annotate e
   cs <- runCollectConstraintsM builtinTypes $ collectConstraints annotExpr
-  subs <- solveConstraints cs
+  subs <- map generalize <$> solveConstraints cs
   return $ applySubstitution subs annotExpr
 
 annotate :: Expr -> AnnotatedExpr TypeVar
@@ -39,7 +40,6 @@ data InferError
   | UnableToUnify Type Type
   deriving (Show)
 
--- TODO: Pass type env for builtins later
 runCollectConstraintsM ::
   TypeEnv ->
   StateT Int (ReaderT TypeEnv (Except InferError)) a ->
@@ -67,16 +67,15 @@ collectConstraints (AnnotRef annot v) =
     Just t -> return $ Set.singleton (TVar annot, t)
     Nothing -> throwError $ UnboundVar v
 collectConstraints (AnnotApp annot f args) = do
+  argConstraints <- traverse collectConstraints args
+  functionConstraints <- collectConstraints f
   let argTypes = TVar . annotation <$> args
-  returnType <- TVar <$> freshVar
-  let functionType = foldr TArrow returnType argTypes
-  cs <- collectConstraints f
+  let functionType = foldr TArrow (TVar annot) argTypes
   return $
-    Set.fromList
-      [ (TVar annot, returnType),
-        (TVar $ annotation f, functionType)
-      ]
-      `Set.union` cs
+    Set.singleton
+      (TVar $ annotation f, functionType)
+      `Set.union` Set.unions (NE.toList argConstraints)
+      `Set.union` functionConstraints
 collectConstraints (AnnotFun annot params b) = do
   paramTypes <- replicateM (length params) (TVar <$> freshVar)
   let paramMap = Map.fromList $ zip params paramTypes
@@ -99,8 +98,8 @@ solveConstraints ::
 solveConstraints cs = case Set.minView cs of
   Just (c, cs') -> case c of
     (t, t') | t == t' -> solveConstraints cs'
-    (TVar v, t) -> unifyWithTypeVar v t cs'
-    (t, TVar v) -> unifyWithTypeVar v t cs'
+    (TVar v, t) | v `notElem` fvs t -> unifyWithTypeVar v t cs'
+    (t, TVar v) | v `notElem` fvs t -> unifyWithTypeVar v t cs'
     (TArrow t1 t2, TArrow t1' t2') ->
       solveConstraints
         (Set.fromList [(t1, t1'), (t2, t2')] `Set.union` cs')
@@ -110,7 +109,7 @@ solveConstraints cs = case Set.minView cs of
     unifyWithTypeVar v t cs =
       Map.insert v t
         <$> solveConstraints (substituteInConstraints v t cs)
-    substituteInConstraints v t cs = Set.map subsInEquation cs
+    substituteInConstraints v t = Set.map subsInEquation
       where
         subsInEquation (t1, t2) = (substituteInType v t t1, substituteInType v t t2)
     substituteInType v t (TVar v') | v == v' = t
@@ -119,6 +118,16 @@ solveConstraints cs = case Set.minView cs of
         (substituteInType v t t1)
         (substituteInType v t t2)
     substituteInType _ _ t' = t'
+
+fvs :: Type -> Set Identifier
+fvs (TVar v) = Set.singleton v
+fvs (TArrow t1 t2) = Set.union (fvs t2) (fvs t1)
+fvs _ = Set.empty
+
+generalize :: Type -> Scheme
+generalize t = case Set.toList $ fvs t of
+  [] -> Monotype t
+  vars -> Forall vars t
 
 applySubstitution ::
   Substitution ->
